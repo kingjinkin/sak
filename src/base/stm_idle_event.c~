@@ -1,0 +1,236 @@
+/*
+     raw os - Copyright (C)  Lingjun Chen(jorya_txj).
+
+    This file is part of raw os.
+
+    raw os is free software; you can redistribute it it under the terms of the 
+    GNU General Public License as published by the Free Software Foundation; 
+    either version 3 of the License, or  (at your option) any later version.
+
+    raw os is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; 
+    without even the implied warranty of  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  
+    See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with this program. if not, write email to jorya.txj@gmail.com
+                                      ---
+
+    A special exception to the LGPL can be applied should you wish to distribute
+    a combined work that includes raw os, without being obliged to provide
+    the source code for any proprietary components. See the file exception.txt
+    for full details of how and when the exception can be applied.
+*/
+
+/*  2012-12  Created by jorya_txj
+  * xxxxxx   please added here
+  */
+
+
+#include <raw_idle_event.h>
+
+#if (CONFIG_RAW_IDLE_EVENT > 0)
+
+static RAW_U8 idle_ready_flag = 0;
+
+extern ACTIVE_EVENT_STRUCT_CB active_idle_task[];
+
+RAW_U8 l_pow2Lkup[9] = {
+    0x00,0x01, 0x02, 0x04, 0x08,
+    0x10, 0x20, 0x40, 0x80
+};
+
+RAW_U8 l_invPow2Lkup[9] = {
+    0xFF,0xFE, 0xFD, 0xFB, 0xF7,
+    0xEF, 0xDF, 0xBF, 0x7F
+};
+
+RAW_U8 log2Lkup[16] = {
+       0, 1, 2, 2,
+       3, 3, 3, 3,
+       4, 4, 4, 4,
+       4, 4, 4, 4
+};
+
+
+
+void idle_event_init(void) 
+{
+
+    ACTIVE_EVENT_STRUCT *temp;
+    RAW_U8 i;
+
+    idle_ready_flag = 0;
+
+    /*Init idle task queue information, MAX_IDLE_EVENT_TASK max 8 is allowed*/
+    for (i = 1; i <= MAX_IDLE_EVENT_TASK; i++) {
+        temp = active_idle_task[i].act;
+
+        RAW_ASSERT(temp != 0);
+        temp->head    = 0;
+        temp->tail    = 0;
+        temp->nUsed   = 0;
+
+    }
+}
+
+
+
+RAW_U16 event_post(ACTIVE_EVENT_STRUCT *me, RAW_U16 sig, RAW_HDL para)
+{
+
+    RAW_SR_ALLOC();
+
+    ACTIVE_EVENT_STRUCT_CB *acb = &active_idle_task[me->prio];
+
+    RAW_CRITICAL_ENTER();
+
+    acb->queue[me->head].sig = sig;
+
+
+    acb->queue[me->head].para = para;
+
+    if (me->head == 0) {
+        me->head = acb->end;
+    }
+
+    --me->head;
+    ++me->nUsed;
+
+    if (me->nUsed == 1) {
+        idle_ready_flag |= l_pow2Lkup[me->prio];
+
+    }
+
+    RAW_CRITICAL_EXIT();
+
+
+    return RAW_SUCCESS;
+
+}
+
+
+
+/*
+************************************************************************************************************************
+*                                      Post an event to idle task
+*
+* Description: This function is called to post an event to idle task, it might be called in interrupt.
+*
+* Arguments  :me is the address of ACTIVE_EVENT_STRUCT
+*                    -----
+*                    sig is the signal which want to be posted to idle task
+*                -----
+*                    para is the parameter which want to be posted to idle task. 
+*
+* Returns   RAW_SUCCESS: raw os return success
+
+* Note(s)
+*
+*             
+************************************************************************************************************************
+*/
+RAW_U16 idle_event_post(ACTIVE_EVENT_STRUCT *me, RAW_U16 sig, RAW_HDL para)
+{
+
+    ACTIVE_EVENT_STRUCT_CB *acb = &active_idle_task[me->prio];
+
+    RAW_ASSERT(me->nUsed < acb->end);
+
+    #if (CONFIG_RAW_ZERO_INTERRUPT > 0)
+
+    if (raw_int_nesting && raw_sched_lock) {
+
+        return int_msg_post(RAW_TYPE_IDLE_EVENT_POST, me, 0, sig, para, 0);
+    }
+
+    #endif
+
+    return event_post(me, sig, para);
+
+
+}
+
+
+void idle_run() 
+{
+    RAW_U8 p;
+    ACTIVE_EVENT_STRUCT *a;
+    STATE_EVENT temp;
+
+    ACTIVE_EVENT_STRUCT_CB *acb;
+
+    RAW_SR_ALLOC();
+
+    /*assign priority to different active idle tasks*/                     
+    for (p = 1; p <= MAX_IDLE_EVENT_TASK; ++p) {
+        a = active_idle_task[p].act;
+        RAW_ASSERT(a != 0);    
+        a->prio = p;               
+    }
+
+    while (1) {
+
+        RAW_CRITICAL_ENTER();
+
+        /*if get events then process it*/
+        if (idle_ready_flag) {
+           
+            #if (MAX_IDLE_EVENT_TASK > 4)
+
+            if (idle_ready_flag & 0xF0) {
+                p = log2Lkup[idle_ready_flag >> 4] + 4;
+            }
+
+            else
+
+            #endif
+            {
+                p = log2Lkup[idle_ready_flag];
+            }
+
+            acb = &active_idle_task[p];
+            a = active_idle_task[p].act;
+
+            RAW_ASSERT(a->nUsed > 0);
+
+            --a->nUsed;
+            if (a->nUsed == 0) {
+                idle_ready_flag &= l_invPow2Lkup[p];
+            }
+            temp.sig = acb->queue[a->tail].sig;
+
+            temp.which_pool = (MEM_POOL *)(acb->queue[a->tail].para);
+
+            if (a->tail == 0) {
+                a->tail = acb->end;
+            }
+
+            --a->tail;
+
+            RAW_CRITICAL_EXIT();
+
+            #if (RAW_FSM_ACTIVE > 0)
+
+            fsm_exceute(&a->super, &temp);
+
+            #else
+
+            hsm_exceute(&a->super, &temp);
+
+            #endif
+
+        }
+
+        else {
+
+            RAW_CRITICAL_EXIT();
+        }
+
+    }
+   
+}
+
+
+#endif
+
+

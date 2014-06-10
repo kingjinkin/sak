@@ -1,0 +1,2 @@
+/home/kin/workspace/sak/mybuild/src/base/CMakeFiles/base.dir
+/home/kin/workspace/sak/mybuild/tests/CMakeFiles/test.dir

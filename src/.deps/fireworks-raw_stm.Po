@@ -1,0 +1,5 @@
+fireworks-raw_stm.o: ../stm/raw_stm.c ../stm/raw_stm.h ../stm/raw.h
+
+../stm/raw_stm.h:
+
+../stm/raw.h:

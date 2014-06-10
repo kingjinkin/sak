@@ -1,0 +1,8 @@
+testsak-raw_idle_event.o: ../stm/raw_idle_event.c ../stm/raw_idle_event.h \
+ ../stm/raw.h ../stm/raw_stm.h
+
+../stm/raw_idle_event.h:
+
+../stm/raw.h:
+
+../stm/raw_stm.h:

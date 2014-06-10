@@ -1,0 +1,11 @@
+include_directories(${CMAKEDEMO_SOURCE_DIR}/base)
+link_directories(${CMAKEDEMO_BINARY_DIR}/base)
+
+
+FOREACH( mylibfolder 
+         base )
+
+    ADD_SUBDIRECTORY(${mylibfolder})
+
+ENDFOREACH()
+
